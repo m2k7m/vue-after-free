@@ -1,7 +1,11 @@
 // NetControl Kernel Exploit - Global Constants
 // Ported from poop.java by Andy Nguyen
 
-// for vue exploit
+
+
+//for vue exploit
+
+
 
 // Kernel constants
 var KERNEL_PID = 0
@@ -107,3 +111,15 @@ var DEFAULT_TLS_SIZE = 0x40
 // Libc symbols (will be resolved at runtime)
 var SETJMP_SYMBOL = 'setjmp'
 var LONGJMP_SYMBOL = 'longjmp'
+
+// Libc offsets (PS4 6.20)
+var SCE_PTHREAD_CREATE_OFFSET = 0xDBCB0
+var SCE_PTHREAD_EXIT_OFFSET = 0xDBCC0
+var SCE_PTHREAD_JOIN_OFFSET = 0xDBCC8
+var SCE_PTHREAD_YIELD_OFFSET = 0xDBCD0
+
+// JSC offsets
+var DISABLE_GC_OFFSET = 0x1E75B20
+
+// Threading config
+var NUM_WORKER_THREADS = 4
