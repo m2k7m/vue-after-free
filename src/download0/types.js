@@ -1065,9 +1065,7 @@ var syscalls = {
         if (pattern_idx === 0) {
           start_offset = offset
         } else if (pattern_idx === syscalls.pattern.length - 1) {
-          var match = view.getBigInt(start_offset, true)
-
-          var id = match.shl(8).hi()
+          var id = view.getInt32(start_offset + 3, true)
 
           syscalls.map.set(id, addr.add(start_offset))
 
