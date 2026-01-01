@@ -137,9 +137,6 @@ mem.view(slave_buf_addr).setInt32(0x20, -1, true)
 
 log('Achieved ARW !!')
 
-log(master_addr)
-log(slave_addr)
-
 var math_min_addr = mem.addrof(Math.min)
 debug(`addrof(Math.min): ${math_min_addr}`)
 
