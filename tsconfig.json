@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     // Environment setup & latest features
-    "lib": ["ES2015"],
-    "target": "ES2015",
+    "lib": ["ES5", "ES2015.Collection", "ES2015.Core"],
+    "target": "es5",
     "module": "Preserve",
     "moduleDetection": "force",
     "allowJs": true,
