@@ -2483,7 +2483,7 @@ function lapse() {
     debug("  aio_info_addr: " + hex(leak_result.aio_info_addr));
     debug("  evf: " + hex(leak_result.evf));
 
-
+    debug("");
     debug("=== STAGE 3: Double free SceKernelAioRWRequest ===");
     const pktopts_sds = double_free_reqs1(
         leak_result.reqs1_addr,
