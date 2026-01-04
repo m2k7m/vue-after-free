@@ -3,6 +3,9 @@
 var WS_PORT = 40404;
 
 try {
+    //allow remoteplay
+    jsmaf.remotePlay = true 
+    
     // start WebSocket server listening to PS4_IP:WS_PORT 
     ws = new jsmaf.WebSocketServer();
     ws.port = WS_PORT;
@@ -70,18 +73,27 @@ try {
     debug = function(msg) {
         _log(`[*] ${msg}`, false)
     }
+    error = function(msg) {
+        _log(`[-] ${msg}`, true)
+    }
     
     log("=== VUE AFTER FREE ===");
 
     // handle WebSocket received messages
     ws.onmessage = function(c, e) {
-        try {
-            var script = String(e.data);
-            jsmaf.eval(script);
-        } catch(err) {
-            log(err);
+        if (e.data.length === 1 && e.data[0].constructor.name === "String") {
+            try {
+                jsmaf.eval(e.data[0]);
+            } catch(err) {
+                error(err.message);
+                for (var i of err.stack.split('\n')) {
+                    error(i);
+                }
+            }
+        } else {
+            error("Failed to receive valid message !!")
         }
     };
 } catch(e) {
-    alert(e);
+    alert(`${e.message}\n${e.stack}`);
 }
