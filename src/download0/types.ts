@@ -560,7 +560,7 @@ const fn: Fn = {
       }
 
       id = new BigInt(input)
-      addr = syscalls.map.get(input)
+      addr = syscalls.map.get(input)!
     }
 
     const f = this.wrapper.bind({ id, addr, ret, name })
@@ -1163,7 +1163,7 @@ const struct: Struct = {
 }
 
 const syscalls = {
-  map: new Map(),
+  map: new Map<number, BigInt>(),
   pattern: [0x48, 0xC7, 0xC0, 0xFF, 0xFF, 0xFF, 0xFF, 0x49, 0x89, 0xCA, 0x0F, 0x05],
   init: function (addr: BigInt) {
     let offset = 0
@@ -1201,4 +1201,4 @@ const syscalls = {
   }
 }
 
-export { BigInt, mem, utils, fn, struct, syscalls, rop }
+export { BigInt, mem, utils, fn, struct, syscalls, rop, gadgets }

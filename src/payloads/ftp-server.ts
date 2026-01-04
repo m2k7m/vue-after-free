@@ -1,6 +1,6 @@
 // Full-Featured FTP Server for PS4
 // Opens on port 42069
-import { fn, BigInt } from 'download0/types'
+import { fn, BigInt, mem, utils } from 'download0/types'
 
 include('userland.js')
 

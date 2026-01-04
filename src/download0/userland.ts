@@ -197,3 +197,5 @@ fn.register(0x5, 'open', ['bigint', 'number', 'number'], 'bigint')
 fn.register(0x6, 'close', ['bigint'], 'bigint')
 
 utils.notify('UwU')
+
+export { jsc_addr, libc_addr, libkernel_addr, eboot_addr }
