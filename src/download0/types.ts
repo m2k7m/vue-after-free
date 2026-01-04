@@ -539,15 +539,13 @@ type Fn<Fns = object> = {
     addr: BigInt
     ret: string
     name: string
-    _error?: () => BigInt
-    strerror?: (errno: number) => string
   }, ...args: ArgTypeToRealType<ArgType>[]): unknown
 } & {
   [key: string]: unknown
 } & Fns
 
 const fn: Fn = {
-  register: function (input: BigInt | number, name: string, _args: ('bigint' | 'number' | 'boolean' | 'string')[], ret: string, skipAlreadyRegistered = true) {
+  register: function (input, name, _args, ret, skipAlreadyRegistered = true) {
     if (name in this && !skipAlreadyRegistered) {
       throw new Error(`${name} already registered in fn !!`)
     }
@@ -635,9 +633,9 @@ const fn: Fn = {
 
       if (this.id) {
         if (result.eq(-1)) {
-          const errno_addr = (this._error!)()
+          const errno_addr = (fn._error as () => BigInt)()
           const errno = mem.view(errno_addr).getUint32(0, true)
-          const str = (this.strerror!)(errno)
+          const str = (fn.strerror as (errno: number) => string)(errno)
 
           throw new Error(`${this.name} returned errno ${errno}: ${str}`)
         }
