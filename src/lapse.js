@@ -2584,8 +2584,10 @@ function lapse() {
         // 1. Verify mmap RWX patch (0x33 -> 0x37 at two locations)
         const mmap_offsets = get_mmap_patch_offsets(FW_VERSION);
         if (mmap_offsets) {
-            const byte1 = Number(ipv6_kernel_rw.ipv6_kread8(kernel.addr.base.add(mmap_offsets[0]))) & 0xff;
-            const byte2 = Number(ipv6_kernel_rw.ipv6_kread8(kernel.addr.base.add(mmap_offsets[1]))) & 0xff;
+            const b1 = ipv6_kernel_rw.ipv6_kread8(kernel.addr.base.add(mmap_offsets[0]));
+            const b2 = ipv6_kernel_rw.ipv6_kread8(kernel.addr.base.add(mmap_offsets[1]));
+            const byte1 = Number(b1.and(0xff));
+            const byte2 = Number(b2.and(0xff));
             if (byte1 === 0x37 && byte2 === 0x37) {
                 debug("  [OK] mmap RWX patch");
             } else {
