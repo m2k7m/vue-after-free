@@ -176,29 +176,34 @@ function bl_file_exists(path) {
     var path_addr = bl_alloc_string(path);
     var stat_buf = mem.malloc(0x78);
 
-    // Call stat(path, &stat_buf)
-    var ret = stat_sys(path_addr, stat_buf);
+    // Call stat(path, &stat_buf) - catch errors (file not found)
+    try {
+        var ret = stat_sys(path_addr, stat_buf);
 
-    if (bl_is_error(ret)) {
-        log("  stat() failed - file not found");
+        if (bl_is_error(ret)) {
+            log("  stat() failed - file not found");
+            return -1;
+        }
+
+        // Check st_mode at offset 0x08 to see if it's a regular file
+        var st_mode = mem.view(stat_buf).getUint16(0x08, true);
+
+        // Check S_ISREG (mode & 0xF000) == S_IFREG (0x8000)
+        if ((st_mode & 0xF000) !== S_IFREG) {
+            log("  Not a regular file (st_mode=0x" + st_mode.toString(16) + ")");
+            return -1;
+        }
+
+        // st_size is at offset 0x48 in struct stat (int64_t)
+        var size = mem.view(stat_buf).getBigInt(0x48, true);
+        var size_num = size.lo + (size.hi * 0x100000000);
+        log("  Found: " + size_num + " bytes");
+
+        return size_num;
+    } catch (e) {
+        log("  " + e.message);
         return -1;
     }
-
-    // Check st_mode at offset 0x08 to see if it's a regular file
-    var st_mode = mem.view(stat_buf).getUint16(0x08, true);
-
-    // Check S_ISREG (mode & 0xF000) == S_IFREG (0x8000)
-    if ((st_mode & 0xF000) !== S_IFREG) {
-        log("  Not a regular file (st_mode=0x" + st_mode.toString(16) + ")");
-        return -1;
-    }
-
-    // st_size is at offset 0x48 in struct stat (int64_t)
-    var size = mem.view(stat_buf).getBigInt(0x48, true);
-    var size_num = size.lo + (size.hi * 0x100000000);
-    log("  Found: " + size_num + " bytes");
-
-    return size_num;
 }
 
 // Get file size using stat()
@@ -206,14 +211,18 @@ function bl_get_file_size_stat(path) {
     var path_addr = bl_alloc_string(path);
     var stat_buf = mem.malloc(0x78);
 
-    var ret = stat_sys(path_addr, stat_buf);
-    if (bl_is_error(ret)) {
+    try {
+        var ret = stat_sys(path_addr, stat_buf);
+        if (bl_is_error(ret)) {
+            return -1;
+        }
+
+        // st_size is at offset 0x48
+        var size = mem.view(stat_buf).getBigInt(0x48, true);
+        return size.lo + (size.hi * 0x100000000);
+    } catch (e) {
         return -1;
     }
-
-    // st_size is at offset 0x48
-    var size = mem.view(stat_buf).getBigInt(0x48, true);
-    return size.lo + (size.hi * 0x100000000);
 }
 
 // Read entire file into memory buffer
