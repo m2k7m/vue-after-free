@@ -1,157 +1,46 @@
 // Remote loader - downloads and evals inject.js from WebSocketServer
+jsmaf.remotePlay = true //enable remoteplay
 
 var WS_PORT = 40404;
 
 try {
-    //allow remoteplay
-    jsmaf.remotePlay = true 
-    
-    
     // start WebSocket server listening to PS4_IP:WS_PORT 
     ws = new jsmaf.WebSocketServer();
     ws.port = WS_PORT;
 
-        
-    jsmaf.root.children.length = 0;
-    
-    
-    var bg_home = new Image({
-        url: "file:///../download0/img/multiview_bg_VAF.png",
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080
-    });
-    jsmaf.root.children.push(bg_home);
-    
-    var logo = new Image({
-        url: "file:///../download0/img/logo.png",
-        x: 560,
-        y: 220,
-        width: 800,
-        height: 500
-    });
-    jsmaf.root.children.push(logo);
-    
-
-    // Button 1 - "Jailbreak"
-    var button1 = new Image({
-        url: "file:///../download0/img/btn_jb.png",
-        x: 800,
-        y: 780,
-        width: 300,
-        height: 80
-    });
-   
-    jsmaf.root.children.push(button1);
-    
-    jsmaf.onKeyDown = function(keyCode) {
-        //cross pressed
-        if (keyCode === 14) {
-            if(!jsmaf.circleIsAdvanceButton) {
-                include('loader.js')
-            }
-        }
-        //circle pressed
-        else if (keyCode === 13) {
-            if(jsmaf.circleIsAdvanceButton) {
-                include('loader.js')
-            }
+    // move logo to top of screen
+    for (var i = 0; i < jsmaf.root.children.length; i++) {
+        var child = jsmaf.root.children[i];
+        if (child.url && child.url.indexOf("logo") !== -1) {
+            child.y = 20;  // 20px from top
+            break;
         }
     }
 
-    var bg_success = new Image({
-        url: "file:///../download0/img/bg-success.png",
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080
-    });
+    // Create text object for logs
+    var logText = new jsmaf.Text();
+    logText.background = "#FFFFFF";
+    logText.x = 20;
+    logText.y = 120;
+    jsmaf.root.children.push(logText);
     
-        // Background
-    var bg_fail = new Image({
-        url: "file:///../download0/img/bg-fail.jpg",
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080
-    });
-    
-            // Background
-    var cross = new Image({
-        url: "file:///assets/img/icon_cross.png",
-        x: 895,
-        y: 1010,
-        width: 40,
-        height: 40
-    });
-    
-    var circle = new Image({
-        url: "file:///assets/img/icon_cross.png",
-        x: 895,
-        y: 1010,
-        width: 40,
-        height: 40
-    });
-    
-    if(jsmaf.circleIsAdvanceButton) {
-         jsmaf.root.children.push(circle);
-    
-    }
-    else {
-         jsmaf.root.children.push(cross);
-    }
-   
-   
-
-
-    // Create text objects for each line
-    var maxLines = 38;
-    var logTextLines = [];
-
-    // Rainbow colors (lighter/pastel for visibility on black)
-    var rainbowColors = [
-        "#FF6B6B", // Light Red
-        "#FFA94D", // Light Orange
-        "#FFD93D", // Light Yellow
-        "#6BCF7F", // Light Green
-        "#4DABF7", // Light Blue
-        "#9775FA", // Light Indigo
-        "#DA77F2"  // Light Violet
-    ];
-
-    // Create text object for each line
-    for (var i = 0; i < maxLines; i++) {
-        var lineText = new jsmaf.Text();
-        lineText.text = "";
-        lineText.background = rainbowColors[i % rainbowColors.length];
-        lineText.x = 20;
-        lineText.y = 120 + (i * 20);
-        jsmaf.root.children.push(lineText);
-        logTextLines.push(lineText);
-    }
-
+    // Log buffer
     var logBuffer = [];
+    var maxLines = 38; 
 
     // Replace global log() to show on screen
     _log = function(msg, screen) {
         if (screen) {
             logBuffer.push(msg);
             if (logBuffer.length > maxLines) {
-                logBuffer.shift();
+                logBuffer.shift(); // Remove oldest (auto-scroll)
             }
-
-            // Update each line's text
-            for (var i = 0; i < maxLines; i++) {
-                if (i < logBuffer.length) {
-                    logTextLines[i].text = logBuffer[i];
-                } else {
-                    logTextLines[i].text = "";
-                }
-            }
+            logText.text = logBuffer.join("\n");
         }
-
-        ws.broadcast(msg); // Still send to websocket too
+        
+        if (ws && typeof ws.broadcast === 'function') {//in case netctrl crashes websocket continue eval and on screen logging
+            ws.broadcast(msg);
+        } 
     }
     log = function(msg) {
         _log(`[+] ${msg}`, true)
@@ -159,35 +48,18 @@ try {
     debug = function(msg) {
         _log(`[*] ${msg}`, false)
     }
-    error = function(msg) {
-        _log(`[-] ${msg}`, true)
-    }
     
-    //log("=== VUE AFTER FREE ===");
-    
-    
-    //startup scripts
-    
-    //include('loader.js')           //autoload lapse on start
-    //include('payloads/web-ui.js')  //autoload web-ui on start
-    
-    
+    log("=== VUE AFTER FREE ===");
+
     // handle WebSocket received messages
     ws.onmessage = function(c, e) {
-        if (e.data.length === 1 && e.data[0].constructor.name === "String") {
-            try {
-                jsmaf.eval(e.data[0]);
-            } catch(err) {
-                error(err.message);
-                for (var i of err.stack.split('\n')) {
-                    error(i);
-                }
-            }
-        } else {
-            error("Failed to receive valid message !!")
+        try {
+            var script = String(e.data);
+            jsmaf.eval(script);
+        } catch(err) {
+            log(err);
         }
     };
 } catch(e) {
-    alert(`${e.message}\n${e.stack}`);
-    //var i = 0;
+    alert(e);
 }
