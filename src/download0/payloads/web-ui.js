@@ -1,6 +1,9 @@
 //simple server
 
-include('userland.js')
+
+if(libc_addr === null){
+    include('userland.js')
+}
 
 jsmaf.remotePlay = true
 
