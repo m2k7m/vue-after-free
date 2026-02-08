@@ -17,9 +17,9 @@ include('stats-tracker.js')
 include('binloader.js')
 include('lapse.js')
 include('kernel.js')
-
-include('check-jailbroken.ts')
-log('check-jailbroken.ts loaded')
+include('check-jailbroken.js')
+include('stats-tracker.js')
+log('All scripts loaded')
 
 // Increment total attempts
 stats.load()
