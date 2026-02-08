@@ -4,6 +4,8 @@ import { checkJailbroken } from 'download0/check-jailbroken'
 // Statistics tracker using syscalls for direct file I/O
 
 // Register read syscall if not already registered
+include('check-jailbroken.js')
+log('check-jailbroken.js loaded')
 
 export const stats = {
   total: 0,
