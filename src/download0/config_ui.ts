@@ -49,6 +49,9 @@ if (typeof lang === 'undefined') {
     jb_behavior: 0
   }
 
+  // Store user's payloads so we don't overwrite them
+  let userPayloads: string[] = []
+
   const jbBehaviorLabels = [lang.jbBehaviorAuto, lang.jbBehaviorNetctrl, lang.jbBehaviorLapse]
   const jbBehaviorImgKeys = ['jbBehaviorAuto', 'jbBehaviorNetctrl', 'jbBehaviorLapse']
 
@@ -419,6 +422,13 @@ if (typeof lang === 'undefined') {
     configContent += '    jb_behavior: ' + currentConfig.jb_behavior + '\n'
     configContent += '};\n\n'
     configContent += 'const payloads = [ //to be ran after jailbroken\n'
+    for (let i = 0; i < userPayloads.length; i++) {
+      configContent += '    "' + userPayloads[i] + '"'
+      if (i < userPayloads.length - 1) {
+        configContent += ','
+      }
+      configContent += '\n'
+    }
     configContent += '];\n'
 
     fs.write('config.js', configContent, function (err) {
@@ -444,6 +454,11 @@ if (typeof lang === 'undefined') {
           currentConfig.autopoop = CONFIG.autopoop || false
           currentConfig.autoclose = CONFIG.autoclose || false
           currentConfig.jb_behavior = CONFIG.jb_behavior || 0
+
+          // Preserve user's payloads
+          if (typeof payloads !== 'undefined' && Array.isArray(payloads)) {
+            userPayloads = payloads.slice()
+          }
 
           for (let i = 0; i < configOptions.length; i++) {
             updateValueText(i)
