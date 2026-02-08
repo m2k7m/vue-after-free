@@ -13,6 +13,9 @@ import { checkJailbroken } from 'download0/check-jailbroken'
     log('userland.js already loaded (libc_addr defined)')
   }
 
+  log('Loading check-jailbroken.js...')
+  include('check-jailbroken.js')
+
   const audio = new jsmaf.AudioClip()
   audio.volume = 0.5  // 50% volume
   audio.open('file://../download0/sfx/bgm.wav')
