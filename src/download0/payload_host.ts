@@ -106,11 +106,11 @@ import { checkJailbroken } from 'download0/check-jailbroken'
     mem.view(path_addr).setUint8(currentPath.length, 0)
 
     const fd = fn.open_sys(path_addr, new BigInt(0, 0), new BigInt(0, 0))
-    // log('open_sys (' + currentPath + ') returned: ' + fd.toString())
+    log('open_sys (' + currentPath + ') returned: ' + fd.toString())
 
     if (!fd.eq(new BigInt(0xffffffff, 0xffffffff))) {
       const count = fn.getdents(fd, buf, new BigInt(0, 4096))
-      // log('getdents returned: ' + count.toString() + ' bytes')
+      log('getdents returned: ' + count.toString() + ' bytes')
 
       if (!count.eq(new BigInt(0xffffffff, 0xffffffff)) && count.lo > 0) {
         let offset = 0
@@ -124,7 +124,7 @@ import { checkJailbroken } from 'download0/check-jailbroken'
             name += String.fromCharCode(mem.view(buf.add(new BigInt(0, offset + 8 + i))).getUint8(0))
           }
 
-          // log('Entry: ' + name + ' type=' + d_type)
+          log('Entry: ' + name + ' type=' + d_type)
 
           if (d_type === 8 && name !== '.' && name !== '..') {
             const lowerName = name.toLowerCase()
