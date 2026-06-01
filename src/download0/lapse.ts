@@ -2067,7 +2067,7 @@ export function lapse () {
   } catch (e) {
     log('Lapse error: ' + (e as Error).message)
     alert('Lapse error: ' + (e as Error).message)
-    utils.notify('Reboot and try again!')
+    // utils.notify('Reboot and try again!') its in cleanup_fail() already 
     log((e as Error).stack ?? '')
     
     // Ensure the minimal fail-safe cleanup runs on unexpected throws
