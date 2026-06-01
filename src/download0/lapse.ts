@@ -2067,12 +2067,12 @@ export function lapse () {
   } catch (e) {
     log('Lapse error: ' + (e as Error).message)
     alert('Lapse error: ' + (e as Error).message)
-    // utils.notify('Reboot and try again!') its in cleanup_fail() already 
+    // utils.notify('Reboot and try again!') its in cleanup_fail() already
     log((e as Error).stack ?? '')
-    
+
     // Ensure the minimal fail-safe cleanup runs on unexpected throws
-    cleanup_fail() 
-    
+    cleanup_fail()
+
     return false
   }
 }
@@ -2147,7 +2147,7 @@ function cleanup () {
 
 function cleanup_fail () {
   utils.notify('Lapse Failed! reboot and try again! UwU')
-  
+
   // Safely push to the UI array if it exists
   if (typeof jsmaf !== 'undefined' && typeof bg_fail !== 'undefined') {
     jsmaf.root.children.push(bg_fail)
