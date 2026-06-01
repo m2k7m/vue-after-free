@@ -2069,6 +2069,10 @@ export function lapse () {
     alert('Lapse error: ' + (e as Error).message)
     utils.notify('Reboot and try again!')
     log((e as Error).stack ?? '')
+    
+    // Ensure the minimal fail-safe cleanup runs on unexpected throws
+    cleanup_fail() 
+    
     return false
   }
 }
@@ -2143,6 +2147,31 @@ function cleanup () {
 
 function cleanup_fail () {
   utils.notify('Lapse Failed! reboot and try again! UwU')
-  jsmaf.root.children.push(bg_fail)
-  cleanup()
+  
+  // Safely push to the UI array if it exists
+  if (typeof jsmaf !== 'undefined' && typeof bg_fail !== 'undefined') {
+    jsmaf.root.children.push(bg_fail)
+  }
+
+  log('Performing minimal cleanup on failure...')
+  try {
+    // Thanks to Al-Azif for this minimal cleanup on failure.
+    // Thanks to RandQalan for pointing it out.
+    // Thanks to ArabPixel for reference: https://github.com/ArabPixel/PSFree-Enhanced/commit/79ba48f68586edf30d911ed9ed39693cfcd109ed.
+    // Thanks to m2k7m for implementing it into vue-after-free.
+    if (unblock_fd !== 0xffffffff) {
+      close(new BigInt(unblock_fd))
+      unblock_fd = 0xffffffff
+    }
+
+    if (prev_core >= 0) {
+      log('Restoring to previous core: ' + prev_core)
+      pin_to_core(prev_core)
+      prev_core = -1
+    }
+
+    set_rtprio(prev_rtprio)
+  } catch (e) {
+    log('Error during minimal cleanup: ' + (e as Error).message)
+  }
 }
